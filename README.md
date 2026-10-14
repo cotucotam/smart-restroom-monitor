@@ -33,3 +33,4 @@ python simulator.py --seed
 ```bash
 python simulator.py --server http://127.0.0.1:8000 --api-key airport-gateway-secret-api-key-2026 --interval 5
 ```
+"# smart-restroom-monitor" 
