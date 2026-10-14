@@ -1,0 +1,112 @@
+# ==========================================
+# Python
+# ==========================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*.local
+
+# Databases & Runtime State
+*.db
+*.sqlite
+*.sqlite3
+!server/seed_*.py
+
+# Server uploads (tùy chọn: bỏ comment nếu không muốn đẩy file tải lên)
+# server/uploads/*
+# !server/uploads/.gitkeep
+
+# ==========================================
+# Embedded / Arduino / PlatformIO
+# ==========================================
+.pio/
+.pioenvs/
+.piolibdeps/
+*.bin
+*.hex
+*.elf
+
+# ==========================================
+# KiCad & Phần cứng / EDA
+# ==========================================
+# KiCad local user settings (chỉ lưu vị trí cửa sổ, zoom, layer bật tắt cá nhân)
+*.kicad_prl
+
+# KiCad backup & autosave
+*-bak
+*.bak
+*-backups/
+_autosave-*
+*.kicad_pcb-bak
+*.kicad_sch-bak
+fp-info-cache
+
+# DRC / ERC Reports & Logs
+*-drc.rpt
+*-erc.rpt
+*.rpt
+*.log
+plot.log
+
+# Netlists & temporary routing
+*.net
+temp-freerouting.dsn
+
+# ==========================================
+# Phần mềm bên thứ ba / Bộ cài nặng (>100MB)
+# ==========================================
+win64-ugs-platform-app-*/
+
+# ==========================================
+# IDE & Code Editors
+# ==========================================
+.history/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# ==========================================
+# Hệ điều hành (Windows / macOS / Linux)
+# ==========================================
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+._*

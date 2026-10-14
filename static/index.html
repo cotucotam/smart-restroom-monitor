@@ -1,0 +1,854 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Giám Sát Giấy Vệ Sinh Sân Bay</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <!-- PDF.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Top Navbar -->
+    <header class="navbar">
+        <div class="nav-brand">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+            </svg>
+            <span>AIRPORT RESTROOM MONITOR</span>
+        </div>
+
+        <nav class="nav-links" id="main-nav">
+            <button class="nav-item active" onclick="switchView('dashboard')">
+                🗺️ Bản đồ tầng
+            </button>
+            <button class="nav-item" onclick="switchView('summary')">
+                📊 Tổng hợp toàn cảng
+            </button>
+            <button class="nav-item" onclick="switchView('alerts')">
+                🔔 Cảnh báo <span id="unack-alerts-badge" class="badge-alert" style="display: none;">0</span>
+            </button>
+            <button class="nav-item" id="nav-admin" onclick="switchView('admin')" style="display: none;">
+                ⚙️ Quản trị hệ thống
+            </button>
+        </nav>
+
+        <div class="nav-right">
+            <div class="ws-status" title="Trạng thái kết nối máy chủ">
+                <span class="ws-dot" id="ws-indicator"></span>
+                <span id="ws-text">Đang kết nối...</span>
+            </div>
+
+            <div class="user-profile" id="user-profile-box" style="display: none;">
+                <span id="display-username" style="font-weight: 600;">admin</span>
+                <span id="display-role" class="role-badge admin">ADMIN</span>
+                <button class="btn btn-secondary btn-sm" onclick="openChangePasswordModal()" title="Đổi mật khẩu">🔑</button>
+                <button class="btn btn-danger btn-sm" onclick="handleLogout()">Đăng xuất</button>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btn-login-open" onclick="openLoginModal()">Đăng nhập</button>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="container">
+        <!-- ================= VIEW 1: DASHBOARD (MAP & MARKERS) ================= -->
+        <section id="view-dashboard">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <label for="sel-terminal" style="font-weight: 600; font-size: 0.85rem;">Nhà ga:</label>
+                    <select id="sel-terminal" onchange="onTerminalChanged()">
+                        <!-- Dynamic -->
+                    </select>
+
+                    <label for="sel-floor" style="font-weight: 600; font-size: 0.85rem;">Tầng:</label>
+                    <select id="sel-floor" onchange="onFloorChanged()">
+                        <!-- Dynamic -->
+                    </select>
+                </div>
+
+                <div class="filter-group" id="admin-map-tools" style="display: none;">
+                    <button class="btn btn-secondary btn-sm" id="btn-toggle-placement" onclick="togglePlacementMode()">
+                        ➕ Chế độ đặt Toilet trên Map
+                    </button>
+                    <span id="placement-hint" style="font-size: 0.8rem; color: #dc2626; display: none;">
+                        👉 Click lên bản đồ để chọn vị trí đặt toilet mới
+                    </span>
+                    <span id="reposition-hint" style="font-size: 0.8rem; color: #b45309; background: #fef3c7; border: 1px solid #fde68a; padding: 4px 10px; border-radius: 6px; display: none; font-weight: 600;">
+                        🎯 Đang dời vị trí: Kéo thả marker màu xanh nổi bật hoặc click vào điểm mới trên bản đồ
+                    </span>
+                </div>
+
+                <div class="status-legend-bar">
+                    <span class="status-pill OK">● Bình thường (&gt;30%)</span>
+                    <span class="status-pill LOW">● Sắp hết (10-30%)</span>
+                    <span class="status-pill EMPTY">● Hết giấy (&le;10%)</span>
+                    <span class="status-pill OFFLINE">● Mất tín hiệu</span>
+                </div>
+            </div>
+
+            <div class="dashboard-grid">
+                <!-- Map display area -->
+                <div class="map-wrapper" id="map-outer-wrapper">
+                    <!-- Zoom Controls -->
+                    <div class="map-zoom-controls" id="map-zoom-controls" style="display: none;">
+                        <button class="btn-zoom" onclick="zoomMap(-0.25)" title="Thu nhỏ (Zoom Out)">➖</button>
+                        <span class="zoom-level-text" id="zoom-percentage">100%</span>
+                        <button class="btn-zoom" onclick="zoomMap(0.25)" title="Phóng to (Zoom In)">➕</button>
+                        <button class="btn-zoom btn-zoom-reset" onclick="resetZoomMap()" title="Vừa màn hình (Fit Width)">↺ Vừa khung</button>
+                    </div>
+
+                    <div class="map-scroll-area" id="map-scroll-wrapper">
+                        <div id="map-loading" style="padding: 2rem; color: var(--text-secondary); margin: auto;">
+                            Đang tải dữ liệu bản đồ PDF...
+                        </div>
+                        <div class="map-canvas-container" id="map-canvas-container" style="display: none;">
+                            <canvas id="pdf-canvas"></canvas>
+                            <div class="markers-overlay" id="markers-layer" onclick="handleMapClick(event)"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Side Detail Panel -->
+                <div class="detail-panel" id="detail-panel">
+                    <div class="panel-header">
+                        <div style="flex: 1;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <div class="panel-title" id="panel-toilet-name">Chọn một nhà vệ sinh</div>
+                                <button class="btn btn-secondary btn-sm" id="btn-edit-toilet-panel" onclick="openEditCurrentToiletModal()" style="display: none; padding: 2px 7px; font-size: 0.75rem;" title="Chỉnh sửa tên và Gateway">✏️ Sửa tên</button>
+                            </div>
+                            <div class="panel-subtitle" id="panel-toilet-sub">Click vào biểu tượng trên bản đồ để xem chi tiết các cabin</div>
+                        </div>
+                        <span id="panel-toilet-status" class="status-pill OK" style="display: none;">OK</span>
+                    </div>
+
+                    <div id="panel-body" style="display: none;">
+                        <div style="font-size: 0.825rem; margin-bottom: 0.75rem; color: var(--text-secondary); display: flex; justify-content: space-between; align-items: center;">
+                            <div><strong>Gateway IP:</strong> <span id="panel-gw-ip">Chưa gán</span></div>
+                            <div style="font-size: 0.75rem; color: var(--text-muted);">Toạ độ: <span id="panel-coords">--</span></div>
+                        </div>
+
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                            <h4 style="font-size: 0.9rem;">Danh sách thiết bị (Cabin)</h4>
+                            <button class="btn btn-primary btn-sm" id="btn-add-cabin-panel" onclick="openAddCabinModal()" style="display: none;">➕ Thêm Cabin</button>
+                        </div>
+                        <div class="cabin-list" id="panel-cabin-list">
+                            <!-- Dynamic -->
+                        </div>
+
+                        <!-- Device Chart Container -->
+                        <div class="chart-container" id="chart-box" style="display: none;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                                <span style="font-size: 0.85rem; font-weight: 600;" id="chart-device-title">Lịch sử mức giấy</span>
+                                <button class="btn btn-secondary btn-sm" onclick="closeChart()">Đóng</button>
+                            </div>
+                            <canvas id="history-chart" height="180"></canvas>
+                        </div>
+
+                        <div id="admin-toilet-actions" style="margin-top: 1rem; display: none; gap: 0.5rem; flex-wrap: wrap;">
+                            <button class="btn btn-secondary btn-sm" id="btn-reposition-toilet" onclick="toggleRepositionToiletMode()">🎯 Dời vị trí trên Map</button>
+                            <button class="btn btn-secondary btn-sm" onclick="openEditCurrentToiletModal()">✏️ Sửa thông tin</button>
+                            <button class="btn btn-danger btn-sm" onclick="handleDeleteCurrentToilet()">🗑️ Xoá Toilet</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ================= VIEW 2: AIRPORT OVERVIEW TABLE ================= -->
+        <section id="view-summary" style="display: none;">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <label style="font-weight: 600; font-size: 0.85rem;">Nhà ga:</label>
+                    <select id="sum-filter-terminal" onchange="loadSummaryData()">
+                        <option value="">Tất cả nhà ga</option>
+                        <option value="1">T2</option>
+                        <option value="2">T3</option>
+                    </select>
+
+                    <label style="font-weight: 600; font-size: 0.85rem;">Trạng thái:</label>
+                    <select id="sum-filter-status" onchange="loadSummaryData()">
+                        <option value="ALL">Tất cả</option>
+                        <option value="EMPTY">Hết giấy (EMPTY)</option>
+                        <option value="LOW">Sắp hết (LOW)</option>
+                        <option value="OFFLINE">Mất kết nối (OFFLINE)</option>
+                        <option value="OK">Bình thường (OK)</option>
+                    </select>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="loadSummaryData()">🔄 Làm mới</button>
+            </div>
+
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Nhà ga</th>
+                            <th>Tầng</th>
+                            <th>Tên Nhà Vệ Sinh</th>
+                            <th>Gateway IP</th>
+                            <th>Số Cabin</th>
+                            <th>Mức giấy min</th>
+                            <th>Trạng thái</th>
+                            <th>Cảnh báo chưa xử lý</th>
+                            <th>Hành động</th>
+                        </tr>
+                    </thead>
+                    <tbody id="summary-table-body">
+                        <!-- Dynamic rows -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ================= VIEW 3: ALERTS CENTER ================= -->
+        <section id="view-alerts" style="display: none;">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <label style="font-weight: 600; font-size: 0.85rem;">Bộ lọc:</label>
+                    <select id="alerts-filter" onchange="loadAlertsData()">
+                        <option value="true">Cảnh báo chưa xác nhận</option>
+                        <option value="false">Tất cả lịch sử cảnh báo</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button class="btn btn-danger btn-sm" id="btn-ack-all-alerts" onclick="handleAcknowledgeAllAlerts()">⚡ Xác nhận nhanh tất cả</button>
+                    <button class="btn btn-secondary btn-sm" onclick="loadAlertsData()">🔄 Làm mới</button>
+                </div>
+            </div>
+
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Mã</th>
+                            <th>Loại Cảnh Báo</th>
+                            <th>Thiết bị / Cabin</th>
+                            <th>Nhà vệ sinh</th>
+                            <th>Vị trí</th>
+                            <th>Thời gian phát sinh</th>
+                            <th>Trạng thái xử lý</th>
+                            <th>Hành động</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alerts-table-body">
+                        <!-- Dynamic rows -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- ================= VIEW 4: ADMIN MANAGEMENT ================= -->
+        <section id="view-admin" style="display: none;">
+            <div style="border-bottom: 1px solid var(--border-color); margin-bottom: 1rem; display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                <button class="tab-btn active" onclick="switchAdminTab('users')">👥 Quản lý Tài khoản</button>
+                <button class="tab-btn" onclick="switchAdminTab('maps')">🗺️ Cập nhật Bản đồ PDF</button>
+                <button class="tab-btn" onclick="switchAdminTab('gateways')">📡 Gateway & Thiết bị ESP</button>
+                <button class="tab-btn" onclick="switchAdminTab('paper')">🧻 Cấu hình Cuộn Giấy</button>
+            </div>
+
+            <!-- Tab: Users -->
+            <div id="admin-tab-users">
+                <div style="display: flex; justify-content: space-between; margin-bottom: 1rem;">
+                    <h3>Danh sách tài khoản hệ thống</h3>
+                    <button class="btn btn-primary btn-sm" onclick="openCreateUserModal()">➕ Thêm người dùng mới</button>
+                </div>
+                <div class="table-responsive">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Tên đăng nhập</th>
+                                <th>Vai trò</th>
+                                <th>Bắt buộc đổi pass</th>
+                                <th>Ngày tạo</th>
+                                <th>Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admin-users-table">
+                            <!-- Dynamic -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Tab: Maps -->
+            <div id="admin-tab-maps" style="display: none;">
+                <div style="max-width: 600px; background: white; padding: 1.5rem; border-radius: 8px; border: 1px solid var(--border-color);">
+                    <h3 style="margin-bottom: 1rem;">Tải lên sơ đồ bản đồ PDF cho tầng</h3>
+                    <form onsubmit="handleUploadMap(event)" style="display: flex; flex-direction: column; gap: 1rem;">
+                        <div class="form-group">
+                            <label>Chọn tầng cần cập nhật bản đồ:</label>
+                            <select id="upload-floor-select" required>
+                                <!-- Dynamic -->
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Chọn file PDF sơ đồ (Tối đa 20MB):</label>
+                            <input type="file" id="upload-floor-file" accept=".pdf" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary" style="align-self: flex-start;">Tải lên & Lưu bản đồ</button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- Tab: Gateways & Devices -->
+            <div id="admin-tab-gateways" style="display: none;">
+                <div style="margin-bottom: 1.5rem;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                        <h3>Danh sách Gateway</h3>
+                        <div style="display: flex; gap: 0.5rem;">
+                            <input type="text" id="new-gw-ip" placeholder="Nhập IP Gateway (vd: 192.168.1.50)">
+                            <button class="btn btn-primary btn-sm" onclick="handleCreateGateway()">Thêm Gateway</button>
+                        </div>
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>IP Gateway</th>
+                                    <th>Gán cho WC</th>
+                                    <th>Vị trí tầng</th>
+                                    <th>Số thiết bị</th>
+                                    <th>Last Seen</th>
+                                    <th>Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-gateways-table">
+                                <!-- Dynamic -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+                        <h3>Danh sách Thiết bị (ESP Clients)</h3>
+                        <button class="btn btn-primary btn-sm" onclick="openAddDeviceAdminModal()">➕ Thêm Thiết Bị / Cabin</button>
+                    </div>
+                    <div class="table-responsive">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>STT</th>
+                                    <th>MAC Address</th>
+                                    <th>Nhãn Cabin</th>
+                                    <th>Thuộc Gateway</th>
+                                    <th>Toilet</th>
+                                    <th>Mức giấy</th>
+                                    <th>Pin</th>
+                                    <th>Trạng thái</th>
+                                    <th>Thao tác</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-devices-table">
+                                <!-- Dynamic -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab: Paper Roll Settings -->
+            <div id="admin-tab-paper" style="display: none;">
+                <div style="max-width: 820px; background: white; padding: 1.75rem; border-radius: 8px; border: 1px solid var(--border-color); box-shadow: 0 1px 3px rgba(0,0,0,0.05);">
+                    <div style="display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.25rem;">
+                        <span style="font-size: 1.75rem;">🧻</span>
+                        <div>
+                            <h3 style="margin: 0; font-size: 1.2rem;">Cấu Hình Cuộn Giấy & Tự Động Quy Đổi Khoảng Cách Cảm Biến</h3>
+                            <div style="font-size: 0.825rem; color: var(--text-secondary); margin-top: 2px;">
+                                Bạn chỉ cần nhập độ dày của cuộn giấy, hệ thống sẽ tự động tính khoảng cách từ cảm biến ToF để kích hoạt cảnh báo tương ứng.
+                            </div>
+                        </div>
+                    </div>
+
+                    <form onsubmit="handleSavePaperSettings(event)" style="display: flex; flex-direction: column; gap: 1.25rem;">
+                        <!-- Thông số kích thước hộp và cuộn giấy -->
+                        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.85rem;">
+                            <div class="form-group">
+                                <label style="font-weight: 600;">1. Khoảng cách HẾT GIẤY:</label>
+                                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                                    <input type="number" id="setting-empty-dist" step="1" min="10" max="1000" required value="160" oninput="updatePaperPreviewTable()" style="flex: 1;">
+                                    <span style="font-weight: 600; color: var(--text-secondary); font-size: 0.8rem;">mm</span>
+                                </div>
+                                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                                    Từ mắt cảm biến tới đáy hộp khi hết sạch giấy.
+                                </div>
+                                <div id="preview-empty-dist-calc" style="font-size: 0.72rem; color: #991b1b; font-weight: 600; margin-top: 4px; background: #fef2f2; padding: 4px 6px; border-radius: 4px; border: 1px solid #fecaca;">
+                                    👉 Đo &ge; 160 mm &rarr; Báo Hết (0%)
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label style="font-weight: 600;">2. Độ dày cuộn KHI ĐẦY:</label>
+                                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                                    <input type="number" id="setting-roll-thick" step="1" min="10" max="500" required value="110" oninput="updatePaperPreviewTable()" style="flex: 1;">
+                                    <span style="font-weight: 600; color: var(--text-secondary); font-size: 0.8rem;">mm</span>
+                                </div>
+                                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                                    Độ dày cuộn giấy lúc mới nguyên (11.0 cm).
+                                </div>
+                                <div id="preview-full-dist-calc" style="font-size: 0.72rem; color: #166534; font-weight: 600; margin-top: 4px; background: #f0fdf4; padding: 4px 6px; border-radius: 4px; border: 1px solid #bbf7d0;">
+                                    👉 Đo &le; 50 mm &rarr; Báo Đầy 100%
+                                </div>
+                            </div>
+
+                            <div class="form-group">
+                                <label style="font-weight: 600; color: #4338ca;">3. Bù trừ sai số cảm biến (Offset):</label>
+                                <div style="display: flex; align-items: center; gap: 0.4rem;">
+                                    <input type="number" id="setting-sensor-offset" step="1" min="-200" max="200" required value="40" oninput="updatePaperPreviewTable()" style="flex: 1; border-color: #a5b4fc;">
+                                    <span style="font-weight: 600; color: #4338ca; font-size: 0.8rem;">mm</span>
+                                </div>
+                                <div style="font-size: 0.72rem; color: var(--text-muted); margin-top: 2px;">
+                                    Trừ bớt sai số phần cứng (vd: lệch 4cm thì nhập 40 mm).
+                                </div>
+                                <div id="preview-offset-calc" style="font-size: 0.72rem; color: #4338ca; font-weight: 600; margin-top: 4px; background: #e0e7ff; padding: 4px 6px; border-radius: 4px; border: 1px solid #c7d2fe;">
+                                    👉 Đang bù trừ: 40 mm
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 3 mốc cảnh báo độ dày và số lần sử dụng -->
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 1.1rem;">
+                            <h4 style="margin: 0 0 0.75rem 0; font-size: 0.925rem; color: #1e293b;">
+                                📐 3 Mốc Độ Dày Giấy Vệ Sinh & Số Lần Sử Dụng (Người dùng tuỳ chỉnh):
+                            </h4>
+                            
+                            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem;">
+                                <!-- Mốc 1.5 cm -->
+                                <div style="background: #fefce8; border: 1px solid #fef08a; border-radius: 6px; padding: 0.75rem;">
+                                    <div style="font-weight: 700; font-size: 0.8rem; color: #854d0e; margin-bottom: 0.4rem;">Mốc 1 (Cảnh báo SẮP HẾT):</div>
+                                    <div class="form-group" style="margin-bottom: 0.35rem;">
+                                        <label style="font-size: 0.75rem;">Độ dày giấy (&le;):</label>
+                                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                            <input type="number" id="setting-warn-low" step="0.1" min="0.1" max="10" required value="1.5" oninput="updatePaperPreviewTable()" style="flex: 1; padding: 0.25rem 0.5rem;">
+                                            <span style="font-size: 0.75rem; font-weight: 600;">cm</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label style="font-size: 0.75rem;">Số lần dùng tương ứng:</label>
+                                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                            <input type="number" id="setting-warn-low-uses" step="1" min="1" max="500" required value="60" oninput="updatePaperPreviewTable()" style="flex: 1; padding: 0.25rem 0.5rem;">
+                                            <span style="font-size: 0.75rem; font-weight: 600;">lần</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Mốc 1.0 cm -->
+                                <div style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 0.75rem;">
+                                    <div style="font-weight: 700; font-size: 0.8rem; color: #b45309; margin-bottom: 0.4rem;">Mốc 2 (Sắp hết cấp độ 2):</div>
+                                    <div class="form-group" style="margin-bottom: 0.35rem;">
+                                        <label style="font-size: 0.75rem;">Độ dày giấy (&le;):</label>
+                                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                            <input type="number" id="setting-warn-mid" step="0.1" min="0.1" max="10" required value="1.0" oninput="updatePaperPreviewTable()" style="flex: 1; padding: 0.25rem 0.5rem;">
+                                            <span style="font-size: 0.75rem; font-weight: 600;">cm</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label style="font-size: 0.75rem;">Số lần dùng tương ứng:</label>
+                                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                            <input type="number" id="setting-warn-mid-uses" step="1" min="1" max="500" required value="35" oninput="updatePaperPreviewTable()" style="flex: 1; padding: 0.25rem 0.5rem;">
+                                            <span style="font-size: 0.75rem; font-weight: 600;">lần</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Mốc 0.5 cm -->
+                                <div style="background: #fef2f2; border: 1px solid #fecaca; border-radius: 6px; padding: 0.75rem;">
+                                    <div style="font-weight: 700; font-size: 0.8rem; color: #dc2626; margin-bottom: 0.4rem;">Mốc 3 (Cảnh báo HẾT GIẤY):</div>
+                                    <div class="form-group" style="margin-bottom: 0.35rem;">
+                                        <label style="font-size: 0.75rem;">Độ dày giấy (&le;):</label>
+                                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                            <input type="number" id="setting-warn-empty" step="0.1" min="0.1" max="5" required value="0.5" oninput="updatePaperPreviewTable()" style="flex: 1; padding: 0.25rem 0.5rem;">
+                                            <span style="font-size: 0.75rem; font-weight: 600;">cm</span>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label style="font-size: 0.75rem;">Số lần dùng tương ứng:</label>
+                                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                                            <input type="number" id="setting-warn-empty-uses" step="1" min="1" max="500" required value="15" oninput="updatePaperPreviewTable()" style="flex: 1; padding: 0.25rem 0.5rem;">
+                                            <span style="font-size: 0.75rem; font-weight: 600;">lần</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Bảng App tự động tính khoảng cách cảm biến tương ứng -->
+                            <div style="margin-top: 1rem; border-top: 1px dashed #cbd5e1; padding-top: 0.75rem;">
+                                <div style="font-weight: 700; font-size: 0.85rem; color: #0f172a; margin-bottom: 0.5rem; display: flex; align-items: center; justify-content: space-between;">
+                                    <span>🤖 BẢNG APP TỰ ĐỘNG QUY ĐỔI KHOẢNG CÁCH CẢM BIẾN (Tự động tính từ độ dày):</span>
+                                    <span style="font-size: 0.75rem; color: #2563eb; font-weight: normal;">* Tự động cập nhật theo các số bạn nhập ở trên</span>
+                                </div>
+                                <div class="table-responsive" style="margin: 0; background: white; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                    <table style="width: 100%; font-size: 0.8rem; margin: 0;">
+                                        <thead>
+                                            <tr style="background: #f1f5f9;">
+                                                <th style="padding: 6px 10px;">Độ dày giấy thực tế</th>
+                                                <th style="padding: 6px 10px; color: #2563eb;">Khoảng cách cảm biến ToF app tự tính</th>
+                                                <th style="padding: 6px 10px;">Lượt dùng ước tính</th>
+                                                <th style="padding: 6px 10px;">Trạng thái hệ thống báo</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="paper-auto-calc-table">
+                                            <!-- Dynamic Rows Generated by updatePaperPreviewTable() -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Công cụ kiểm tra thử khoảng cách cảm biến -->
+                        <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 0.9rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap;">
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <span style="font-size: 1.25rem;">🔍</span>
+                                <div>
+                                    <div style="font-weight: 700; font-size: 0.825rem; color: #166534;">Thử nghiệm tính toán trực tiếp:</div>
+                                    <div style="font-size: 0.75rem; color: #15803d;">Nhập khoảng cách cảm biến đo được (mm) để xem app sẽ báo thế nào:</div>
+                                </div>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 0.5rem;">
+                                <input type="number" id="test-sensor-dist" placeholder="Ví dụ: 128" value="128" oninput="testCalculateSensorDist()" style="width: 100px; padding: 0.35rem 0.5rem; border: 1px solid #86efac; border-radius: 4px;">
+                                <span style="font-size: 0.8rem; font-weight: 600;">mm</span>
+                            </div>
+                            <div id="test-sensor-result" style="font-size: 0.825rem; font-weight: 600; color: #166534; background: white; padding: 4px 10px; border-radius: 4px; border: 1px solid #86efac;">
+                                <!-- Live calculation result -->
+                            </div>
+                        </div>
+
+                        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="loadAdminPaperSettings()">↺ Đặt lại mặc định</button>
+                            <button type="submit" class="btn btn-primary">💾 Lưu Cấu Hình Cuộn Giấy</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ================= MODALS ================= -->
+    <!-- Modal: Login -->
+    <div class="modal-backdrop" id="modal-login" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Đăng Nhập Hệ Thống</h3>
+                <button class="btn btn-secondary btn-sm" onclick="closeLoginModal()">✕</button>
+            </div>
+            <form onsubmit="handleLoginSubmit(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Tên đăng nhập:</label>
+                        <input type="text" id="login-username" required placeholder="admin">
+                    </div>
+                    <div class="form-group">
+                        <label>Mật khẩu:</label>
+                        <input type="password" id="login-password" required placeholder="••••••••">
+                    </div>
+                    <div id="login-error" style="color: #dc2626; font-size: 0.85rem; display: none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeLoginModal()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">Đăng Nhập</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Force Change Password (on first login) -->
+    <div class="modal-backdrop" id="modal-force-pwd" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" style="color: #dc2626;">Bắt Buộc Đổi Mật Khẩu Lần Đầu</h3>
+            </div>
+            <form onsubmit="handleForcePasswordSubmit(event)">
+                <div class="modal-body">
+                    <p style="font-size: 0.85rem; color: var(--text-secondary);">
+                        Tài khoản của bạn vừa khởi tạo và đang dùng mật khẩu mặc định. Vui lòng thiết lập mật khẩu mới để tiếp tục sử dụng hệ thống.
+                    </p>
+                    <div class="form-group">
+                        <label>Mật khẩu hiện tại (admin123):</label>
+                        <input type="password" id="force-old-pwd" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mật khẩu mới (tối thiểu 6 ký tự):</label>
+                        <input type="password" id="force-new-pwd" minlength="6" required>
+                    </div>
+                    <div id="force-pwd-error" style="color: #dc2626; font-size: 0.85rem; display: none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-primary">Xác Nhận Đổi Mật Khẩu</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Change Password Normal -->
+    <div class="modal-backdrop" id="modal-change-pwd" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Đổi Mật Khẩu</h3>
+                <button class="btn btn-secondary btn-sm" onclick="closeChangePasswordModal()">✕</button>
+            </div>
+            <form onsubmit="handleChangePasswordSubmit(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Mật khẩu cũ:</label>
+                        <input type="password" id="chg-old-pwd" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Mật khẩu mới:</label>
+                        <input type="password" id="chg-new-pwd" minlength="6" required>
+                    </div>
+                    <div id="chg-pwd-error" style="color: #dc2626; font-size: 0.85rem; display: none;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeChangePasswordModal()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">Cập nhật</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Place New Toilet -->
+    <div class="modal-backdrop" id="modal-add-toilet" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Thêm Nhà Vệ Sinh Mới Tại Vị Trí Này</h3>
+                <button class="btn btn-secondary btn-sm" onclick="closeAddToiletModal()">✕</button>
+            </div>
+            <form onsubmit="handleAddToiletSubmit(event)">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Tên nhà vệ sinh:</label>
+                        <input type="text" id="new-toilet-name" required placeholder="VD: WC Nam Cổng 12">
+                    </div>
+                    <div class="form-group">
+                        <label>IP Gateway gán trực tiếp (tuỳ chọn):</label>
+                        <input type="text" id="new-toilet-gw-ip" placeholder="VD: 192.168.1.100">
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary);">
+                        Toạ độ trên bản đồ: <span id="new-toilet-coords">0.5, 0.5</span>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeAddToiletModal()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">Lưu Vị Trí</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: User Form (Admin) -->
+    <div class="modal-backdrop" id="modal-user-form" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="user-modal-title">Tạo Tài Khoản Mới</h3>
+                <button class="btn btn-secondary btn-sm" onclick="closeUserModal()">✕</button>
+            </div>
+            <form onsubmit="handleUserFormSubmit(event)">
+                <input type="hidden" id="form-user-id">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Tên đăng nhập:</label>
+                        <input type="text" id="form-user-name" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Vai trò (Role):</label>
+                        <select id="form-user-role">
+                            <option value="operator">Operator (Chỉ xem & xác nhận alert)</option>
+                            <option value="admin">Admin (Toàn quyền quản trị)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label id="form-user-pwd-label">Mật khẩu:</label>
+                        <input type="password" id="form-user-pwd" minlength="6">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeUserModal()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">Lưu Người Dùng</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Add New Cabin (From Toilet detail or Admin) -->
+    <div class="modal-backdrop" id="modal-add-cabin" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title" id="add-cabin-modal-title">Thêm Cabin Mới Cho Nhà Vệ Sinh</h3>
+                <button class="btn btn-secondary btn-sm" onclick="closeAddCabinModal()">✕</button>
+            </div>
+            <form onsubmit="handleAddCabinSubmit(event)">
+                <input type="hidden" id="add-cabin-toilet-id">
+                <div class="modal-body">
+                    <div class="form-group" id="group-add-cabin-toilet-select" style="display: none;">
+                        <label>Chọn Nhà Vệ Sinh:</label>
+                        <select id="add-cabin-select-toilet" onchange="onAddCabinToiletSelectChange()">
+                            <!-- Dynamic toilets list -->
+                        </select>
+                    </div>
+                    <div class="form-group" id="group-add-cabin-toilet-name">
+                        <label>Nhà vệ sinh gán:</label>
+                        <input type="text" id="add-cabin-toilet-name-display" disabled style="background: #f1f5f9; font-weight: 600;">
+                    </div>
+                    <div style="display: grid; grid-template-columns: 120px 1fr; gap: 0.75rem;">
+                        <div class="form-group">
+                            <label>Số thứ tự (STT):</label>
+                            <input type="number" id="add-cabin-order" min="1" max="99" required value="1" oninput="onCabinOrderInput()">
+                        </div>
+                        <div class="form-group">
+                            <label>Tên / Nhãn Cabin:</label>
+                            <input type="text" id="add-cabin-label" required placeholder="VD: Cabin 1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Địa chỉ MAC của ESP:</label>
+                        <input type="text" id="add-cabin-mac" required placeholder="VD: AA:BB:CC:DD:EE:01" style="text-transform: uppercase;">
+                        <small style="color: var(--text-secondary); font-size: 0.75rem;">Định dạng MAC: 12 ký tự hex (ví dụ: AA:BB:CC:DD:EE:01)</small>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeAddCabinModal()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">➕ Thêm Cabin</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Device Edit (Admin) -->
+    <div class="modal-backdrop" id="modal-device-form" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Chỉnh Sửa Thiết Bị Cabin</h3>
+                <button class="btn btn-secondary btn-sm" onclick="closeDeviceModal()">✕</button>
+            </div>
+            <form onsubmit="handleDeviceFormSubmit(event)">
+                <input type="hidden" id="form-device-id">
+                <div class="modal-body">
+                    <div style="display: grid; grid-template-columns: 120px 1fr; gap: 0.75rem;">
+                        <div class="form-group">
+                            <label>Số thứ tự (STT):</label>
+                            <input type="number" id="form-device-order" min="1" max="99" required value="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Nhãn Cabin (VD: Cabin 1, Cabin VIP...):</label>
+                            <input type="text" id="form-device-label" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Địa chỉ MAC của ESP:</label>
+                        <input type="text" id="form-device-mac" required style="text-transform: uppercase;">
+                        <small style="color: var(--text-secondary); font-size: 0.75rem;">Có thể cập nhật MAC khi thay thế board ESP</small>
+                    </div>
+                    <div class="form-group">
+                        <label>Thuộc Gateway:</label>
+                        <select id="form-device-gw">
+                            <!-- Dynamic -->
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeDeviceModal()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">Cập Nhật</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Edit Toilet -->
+    <div class="modal-backdrop" id="modal-edit-toilet" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 class="modal-title">Chỉnh Sửa Thông Tin Nhà Vệ Sinh</h3>
+                <button class="btn btn-secondary btn-sm" onclick="closeEditToiletModal()">✕</button>
+            </div>
+            <form onsubmit="handleEditToiletSubmit(event)">
+                <input type="hidden" id="edit-toilet-id">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Tên nhà vệ sinh:</label>
+                        <input type="text" id="edit-toilet-name" required placeholder="VD: WC Cổng 15 - Cánh Đông">
+                    </div>
+                    <div class="form-group">
+                        <label>IP Gateway gán:</label>
+                        <input type="text" id="edit-toilet-gw-ip" placeholder="VD: 192.168.1.100" oninput="checkDiscoveredClientsForModal(this.value)">
+                        <div id="edit-toilet-discovered-preview" style="display: none; margin-top: 6px; font-size: 0.8rem;"></div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;">
+                        <div class="form-group">
+                            <label>Toạ độ X (0.0 - 1.0):</label>
+                            <input type="number" id="edit-toilet-x" step="0.001" min="0" max="1" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Toạ độ Y (0.0 - 1.0):</label>
+                            <input type="number" id="edit-toilet-y" step="0.001" min="0" max="1" required>
+                        </div>
+                    </div>
+                    <div style="font-size: 0.8rem; color: var(--text-secondary);">
+                        💡 Mẹo: Bạn có thể kéo thả trực tiếp biểu tượng trên bản đồ hoặc bấm "🎯 Dời vị trí trên Map" để chọn toạ độ mới nhanh chóng.
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeEditToiletModal()">Hủy</button>
+                    <button type="submit" class="btn btn-primary">Lưu Thay Đổi</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Emergency Alert Popup -->
+    <div class="modal-backdrop alert-popup-backdrop" id="modal-alert-popup" style="display: none;">
+        <div class="modal-content alert-popup-content">
+            <div class="alert-popup-header">
+                <div style="display: flex; align-items: center; gap: 0.65rem;">
+                    <span class="alert-pulsing-icon">🚨</span>
+                    <div>
+                        <h3 class="modal-title" style="color: #b91c1c; font-size: 1.15rem; margin: 0;">CẢNH BÁO SỰ CỐ KHẨN CẤP</h3>
+                        <div style="font-size: 0.8rem; color: #dc2626; font-weight: 500;" id="alert-popup-subtitle">Phát hiện sự cố cần nhân viên kiểm tra</div>
+                    </div>
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="closeAlertPopup()">✕</button>
+            </div>
+            
+            <div class="alert-popup-body" id="alert-popup-list">
+                <!-- Dynamic Alert Cards -->
+            </div>
+
+            <div class="modal-footer alert-popup-footer">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="switchViewFromPopup('alerts')">📋 Xem trang cảnh báo</button>
+                <div style="display: flex; gap: 0.5rem;">
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="closeAlertPopup()">Để sau</button>
+                    <button type="button" class="btn btn-danger" onclick="handleAcknowledgeAllAlerts(true)">⚡ Xác nhận nhanh tất cả</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div class="toast-container" id="toast-container"></div>
+
+    <script>
+    // Inline fallback ensuring switchAdminTab always switches even if cached
+    window.switchAdminTab = function(tabName) {
+        const tabs = ['users', 'maps', 'gateways', 'paper'];
+        tabs.forEach(t => {
+            const el = document.getElementById(`admin-tab-${t}`);
+            if (el) el.style.display = (t === tabName) ? 'block' : 'none';
+        });
+        const btns = document.querySelectorAll('#view-admin .tab-btn');
+        const idxMap = { 'users': 0, 'maps': 1, 'gateways': 2, 'paper': 3 };
+        btns.forEach((b, i) => {
+            b.className = (i === idxMap[tabName]) ? 'tab-btn active' : 'tab-btn';
+        });
+        if (tabName === 'paper' && typeof loadAdminPaperSettings === 'function') {
+            loadAdminPaperSettings();
+        }
+    };
+    </script>
+    <script src="/static/js/app.js?v=20261009_v7"></script>
+</body>
+</html>
